@@ -1,1 +1,3 @@
 hr.delmisoft.keycloak.otp.sms.LogSmsSenderFactory
+hr.delmisoft.keycloak.otp.sms.TwilioSmsProviderFactory
+hr.delmisoft.keycloak.otp.sms.SnsSmsProviderFactory

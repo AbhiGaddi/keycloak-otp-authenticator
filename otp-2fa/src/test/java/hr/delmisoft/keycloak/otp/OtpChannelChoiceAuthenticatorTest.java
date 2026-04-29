@@ -28,6 +28,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 
+import hr.delmisoft.keycloak.otp.identifier.IdentifierFormConst;
+import hr.delmisoft.keycloak.otp.identifier.IdentifierUtil;
 import hr.delmisoft.keycloak.otp.sms.SmsException;
 import hr.delmisoft.keycloak.otp.sms.SmsOtpConst;
 import hr.delmisoft.keycloak.otp.sms.SmsProvider;
@@ -478,5 +480,66 @@ class OtpChannelChoiceAuthenticatorTest {
         when(user.getEmail()).thenReturn(null);
         when(user.getFirstAttribute(SmsOtpConst.DEFAULT_PHONE_ATTRIBUTE)).thenReturn(null);
         assertThat(authenticator.configuredFor(session, realm, user), equalTo(false));
+    }
+
+    // --- Auto-route from upstream IdentifierFormAuthenticator ---
+
+    @Test
+    void authenticate_identifierTypeEmail_autoSendsEmailAndShowsOtpForm() throws Exception {
+        setupCommonMocks();
+        when(authSession.getAuthNote(IdentifierFormConst.AUTH_NOTE_IDENTIFIER_TYPE))
+                .thenReturn(IdentifierUtil.IdentifierType.EMAIL.name());
+        when(context.form()).thenReturn(form);
+        when(form.createForm(EmailOtpConst.LOGIN_TEMPLATE)).thenReturn(formResponse);
+
+        authenticator.authenticate(context);
+
+        verify(authSession).setAuthNote(eq(OtpChannelChoiceAuthenticator.AUTH_NOTE_CHANNEL), eq("email"));
+        verify(emailProvider).send(eq(EmailOtpConst.EMAIL_SUBJECT_KEY), eq(EmailOtpConst.EMAIL_TEMPLATE), any());
+        verify(context).challenge(formResponse);
+        verify(form, never()).createForm(OtpChannelChoiceAuthenticator.TEMPLATE_CHANNEL_SELECT);
+    }
+
+    @Test
+    void authenticate_identifierTypePhone_autoSendsSmsAndShowsOtpForm() throws Exception {
+        setupCommonMocks();
+        when(authSession.getAuthNote(IdentifierFormConst.AUTH_NOTE_IDENTIFIER_TYPE))
+                .thenReturn(IdentifierUtil.IdentifierType.PHONE.name());
+        when(context.form()).thenReturn(form);
+        when(form.createForm(SmsOtpConst.LOGIN_TEMPLATE)).thenReturn(formResponse);
+
+        authenticator.authenticate(context);
+
+        verify(authSession).setAuthNote(eq(OtpChannelChoiceAuthenticator.AUTH_NOTE_CHANNEL), eq("sms"));
+        verify(smsProvider).send(eq("+1234567890"), anyString());
+        verify(context).challenge(formResponse);
+        verify(form, never()).createForm(OtpChannelChoiceAuthenticator.TEMPLATE_CHANNEL_SELECT);
+    }
+
+    @Test
+    void authenticate_identifierTypeUsername_showsPicker() {
+        when(context.getAuthenticationSession()).thenReturn(authSession);
+        when(authSession.getAuthNote(IdentifierFormConst.AUTH_NOTE_IDENTIFIER_TYPE))
+                .thenReturn(IdentifierUtil.IdentifierType.USERNAME.name());
+        when(context.form()).thenReturn(form);
+        when(form.createForm(OtpChannelChoiceAuthenticator.TEMPLATE_CHANNEL_SELECT)).thenReturn(formResponse);
+
+        authenticator.authenticate(context);
+
+        verify(context).challenge(formResponse);
+        verify(form).createForm(OtpChannelChoiceAuthenticator.TEMPLATE_CHANNEL_SELECT);
+    }
+
+    @Test
+    void authenticate_existingChannelNoteEmail_resendsViaEmail() throws Exception {
+        setupCommonMocks();
+        when(authSession.getAuthNote(OtpChannelChoiceAuthenticator.AUTH_NOTE_CHANNEL)).thenReturn("email");
+        when(context.form()).thenReturn(form);
+        when(form.createForm(EmailOtpConst.LOGIN_TEMPLATE)).thenReturn(formResponse);
+
+        authenticator.authenticate(context);
+
+        verify(emailProvider).send(eq(EmailOtpConst.EMAIL_SUBJECT_KEY), eq(EmailOtpConst.EMAIL_TEMPLATE), any());
+        verify(context).challenge(formResponse);
     }
 }

@@ -31,6 +31,19 @@
             <artifactId>keycloak-core</artifactId>
         </dependency>
 
+        <!-- AWS SNS — bundled into the shaded fat JAR by the dist module.
+             Optional at runtime: only loaded when KC_SPI_SMS_PROVIDER=sns. -->
+        <dependency>
+            <groupId>software.amazon.awssdk</groupId>
+            <artifactId>sns</artifactId>
+        </dependency>
+
+        <!-- libphonenumber — bundled into the shaded fat JAR by the dist module. -->
+        <dependency>
+            <groupId>com.googlecode.libphonenumber</groupId>
+            <artifactId>libphonenumber</artifactId>
+        </dependency>
+
         <!-- Test dependencies -->
         <dependency>
             <groupId>org.junit.jupiter</groupId>

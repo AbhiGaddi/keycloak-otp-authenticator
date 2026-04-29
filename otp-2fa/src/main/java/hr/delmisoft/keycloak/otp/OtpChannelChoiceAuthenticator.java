@@ -20,6 +20,8 @@ import org.keycloak.sessions.AuthenticationSessionModel;
 
 import org.jboss.logging.Logger;
 
+import hr.delmisoft.keycloak.otp.identifier.IdentifierFormConst;
+import hr.delmisoft.keycloak.otp.identifier.IdentifierUtil;
 import hr.delmisoft.keycloak.otp.sms.SmsException;
 import hr.delmisoft.keycloak.otp.sms.SmsOtpConst;
 import hr.delmisoft.keycloak.otp.sms.SmsProvider;
@@ -51,8 +53,31 @@ public class OtpChannelChoiceAuthenticator implements Authenticator {
 
     @Override
     public void authenticate(AuthenticationFlowContext context) {
-        // Show channel selection form
+        // Auto-route if upstream IdentifierFormAuthenticator captured a typed identifier.
+        // EMAIL → email channel, PHONE → sms channel, USERNAME/null → show picker.
+        String preselected = resolvePreselectedChannel(context);
+        if (preselected != null) {
+            sendCodeAndChallenge(context, preselected);
+            return;
+        }
         context.challenge(context.form().createForm(TEMPLATE_CHANNEL_SELECT));
+    }
+
+    private static String resolvePreselectedChannel(AuthenticationFlowContext context) {
+        AuthenticationSessionModel authSession = context.getAuthenticationSession();
+        if (authSession == null) return null;
+
+        // Re-entry from browser back / resend on the OTP form: a channel was already chosen.
+        String existing = authSession.getAuthNote(AUTH_NOTE_CHANNEL);
+        if (CHANNEL_EMAIL.equals(existing) || CHANNEL_SMS.equals(existing)) {
+            return existing;
+        }
+
+        String type = authSession.getAuthNote(IdentifierFormConst.AUTH_NOTE_IDENTIFIER_TYPE);
+        if (type == null) return null;
+        if (IdentifierUtil.IdentifierType.EMAIL.name().equals(type)) return CHANNEL_EMAIL;
+        if (IdentifierUtil.IdentifierType.PHONE.name().equals(type)) return CHANNEL_SMS;
+        return null;
     }
 
     @Override
@@ -81,12 +106,19 @@ public class OtpChannelChoiceAuthenticator implements Authenticator {
             context.challenge(context.form().setError("otpChannelInvalid").createForm(TEMPLATE_CHANNEL_SELECT));
             return;
         }
+        sendCodeAndChallenge(context, channel);
+    }
 
+    /**
+     * Generates an OTP, persists code/expiry/attempts/channel auth notes, sends via the
+     * chosen channel, and renders the OTP entry form. Used by both the picker
+     * (handleChannelSelection) and the auto-route path (authenticate).
+     */
+    private void sendCodeAndChallenge(AuthenticationFlowContext context, String channel) {
         int codeLength = getConfigInt(context, OtpChannelChoiceConst.CONFIG_CODE_LENGTH, OtpChannelChoiceConst.DEFAULT_CODE_LENGTH);
         int ttl = getConfigInt(context, OtpChannelChoiceConst.CONFIG_TTL, OtpChannelChoiceConst.DEFAULT_TTL);
         String code = generateCode(codeLength);
 
-        // Clear any previous OTP state (handles browser back + re-selection)
         AuthenticationSessionModel authSession = context.getAuthenticationSession();
         authSession.removeAuthNote(AUTH_NOTE_CODE);
         authSession.removeAuthNote(AUTH_NOTE_EXPIRY);
@@ -130,9 +162,12 @@ public class OtpChannelChoiceAuthenticator implements Authenticator {
         String attemptsStr = authSession.getAuthNote(AUTH_NOTE_ATTEMPTS);
 
         if (storedCode == null || expiryStr == null || attemptsStr == null) {
-            // Session state is missing — restart from channel selection
+            // Session state is missing — restart from channel selection. Clear both the
+            // selected channel and the upstream identifier type so the user re-picks
+            // (rather than silently re-sending a code via an auto-routed channel).
             authSession.removeAuthNote(AUTH_NOTE_CHANNEL);
-            authenticate(context);
+            authSession.removeAuthNote(IdentifierFormConst.AUTH_NOTE_IDENTIFIER_TYPE);
+            context.challenge(context.form().createForm(TEMPLATE_CHANNEL_SELECT));
             return;
         }
 

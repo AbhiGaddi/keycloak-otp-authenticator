@@ -244,19 +244,83 @@ Email OTP uses Keycloak's built-in email provider. Configure SMTP settings in th
 
 ## SMS Provider SPI
 
-SMS sending is pluggable via a custom SPI. The plugin ships with a **log** provider (`LogSmsSenderFactory`) that logs SMS messages to the Keycloak server log instead of sending them — useful for development and testing.
+SMS sending is pluggable via a custom SPI. Three providers ship with the plugin out of the box:
 
-### Using the Log Provider
+| Provider id | Class | Use case |
+|---|---|---|
+| `log`    | `LogSmsSenderFactory`   | Default. Writes the OTP to Keycloak's stdout. Dev / E2E only. |
+| `twilio` | `TwilioSmsProviderFactory` | Sends via Twilio Programmable Messaging. |
+| `sns`    | `SnsSmsProviderFactory`    | Sends via Amazon SNS Publish (region-scoped). |
 
-The log provider is active by default. OTP codes will appear in the Keycloak server log:
+Switching providers is a one-env-var change — the active provider is selected via Keycloak's standard SPI configuration mechanism (`KC_SPI_SMS_PROVIDER` env var or `--spi-sms-provider` flag). No code change or rebuild required.
+
+### Using the Log Provider (default)
+
+The log provider is active by default. OTP codes appear in the Keycloak server log:
 
 ```
 INFO  [hr.delmisoft.keycloak.otp.sms.LogSmsSenderFactory] SMS to +1234567890: Your verification code is: 123456
 ```
 
+### Using the Twilio Provider
+
+Set the provider id and supply Twilio credentials:
+
+```yaml
+# docker-compose.yml
+environment:
+  KC_SPI_SMS_PROVIDER: twilio
+  TWILIO_ACCOUNT_SID:  ${TWILIO_ACCOUNT_SID}
+  TWILIO_AUTH_TOKEN:   ${TWILIO_AUTH_TOKEN}
+  TWILIO_FROM_NUMBER:  ${TWILIO_FROM_NUMBER}
+```
+
+Equivalent CLI flags for non-Compose deployments:
+
+```bash
+/opt/keycloak/bin/kc.sh start \
+  --spi-sms-provider=twilio \
+  --spi-sms-twilio-account-sid="$TWILIO_ACCOUNT_SID" \
+  --spi-sms-twilio-auth-token="$TWILIO_AUTH_TOKEN" \
+  --spi-sms-twilio-from-number="$TWILIO_FROM_NUMBER"
+```
+
+The Twilio provider has zero extra runtime dependencies — it uses JDK 17's `java.net.http.HttpClient` to call the Twilio REST API directly.
+
+### Using the Amazon SNS Provider
+
+Set the provider id and supply AWS credentials (or rely on the default credential chain):
+
+```yaml
+# docker-compose.yml
+environment:
+  KC_SPI_SMS_PROVIDER: sns
+  AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+  AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+  AWS_REGION: ap-south-1
+  AWS_SNS_SENDER_ID: BLUEDOTS         # optional, alphanumeric, country-dependent
+  AWS_SNS_SMS_TYPE:  Transactional    # default; "Promotional" also valid
+```
+
+Equivalent CLI flags:
+
+```bash
+/opt/keycloak/bin/kc.sh start \
+  --spi-sms-provider=sns \
+  --spi-sms-sns-access-key-id="$AWS_ACCESS_KEY_ID" \
+  --spi-sms-sns-secret-access-key="$AWS_SECRET_ACCESS_KEY" \
+  --spi-sms-sns-region=ap-south-1 \
+  --spi-sms-sns-sender-id=BLUEDOTS \
+  --spi-sms-sns-sms-type=Transactional
+```
+
+If `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` are not set, the AWS SDK falls back to its **default credential chain** — env, ECS task role, EC2 instance profile, then `~/.aws/credentials`. This is the preferred path for production on EKS with IRSA (IAM Roles for Service Accounts) so static keys never touch the runtime.
+
+The SNS provider depends on `software.amazon.awssdk:sns` (~5 MB shaded into the fat JAR). If you don't intend to use SNS, leave `KC_SPI_SMS_PROVIDER` set to `log` or `twilio` — the SDK code is on classpath but never loaded.
+
 ### Implementing a Custom SMS Provider
 
-To integrate with a real SMS gateway (e.g., Twilio, AWS SNS), implement two interfaces:
+To integrate with another SMS gateway (MSG91, Vonage, Plivo, Karix, etc.), implement two interfaces:
 
 1. **`SmsProvider`** — the send logic:
 
