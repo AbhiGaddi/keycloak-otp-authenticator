@@ -149,17 +149,29 @@ public class Msg91SmsProviderFactory implements SmsProviderFactory {
                     .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8))
                     .build();
 
+            long startedAt = System.currentTimeMillis();
             try {
                 HttpResponse<String> resp = httpClient.send(req, HttpResponse.BodyHandlers.ofString());
+                long latencyMs = System.currentTimeMillis() - startedAt;
+                String responseBody = resp.body() == null ? "" : resp.body();
                 if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
-                    LOG.debugf("MSG91 SMS dispatched to %s (status=%d)", normalisedPhone, resp.statusCode());
+                    LOG.infof("MSG91 SMS dispatched: phone=%s status=%d latency_ms=%d response=%s",
+                            normalisedPhone, resp.statusCode(), latencyMs, responseBody);
                     return;
                 }
-                throw new SmsException("MSG91 send failed: HTTP " + resp.statusCode() + " " + resp.body());
+                LOG.errorf("MSG91 SMS failed: phone=%s status=%d latency_ms=%d response=%s",
+                        normalisedPhone, resp.statusCode(), latencyMs, responseBody);
+                throw new SmsException("MSG91 send failed: HTTP " + resp.statusCode() + " " + responseBody);
             } catch (java.io.IOException e) {
+                long latencyMs = System.currentTimeMillis() - startedAt;
+                LOG.errorf(e, "MSG91 SMS IO error: phone=%s latency_ms=%d error=%s",
+                        normalisedPhone, latencyMs, e.getMessage());
                 throw new SmsException("MSG91 send IO error", e);
             } catch (InterruptedException e) {
+                long latencyMs = System.currentTimeMillis() - startedAt;
                 Thread.currentThread().interrupt();
+                LOG.errorf(e, "MSG91 SMS interrupted: phone=%s latency_ms=%d",
+                        normalisedPhone, latencyMs);
                 throw new SmsException("MSG91 send interrupted", e);
             }
         }
