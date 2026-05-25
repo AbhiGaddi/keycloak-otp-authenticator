@@ -244,13 +244,14 @@ Email OTP uses Keycloak's built-in email provider. Configure SMTP settings in th
 
 ## SMS Provider SPI
 
-SMS sending is pluggable via a custom SPI. Three providers ship with the plugin out of the box:
+SMS sending is pluggable via a custom SPI. Four providers ship with the plugin out of the box:
 
 | Provider id | Class | Use case |
 |---|---|---|
 | `log`    | `LogSmsSenderFactory`   | Default. Writes the OTP to Keycloak's stdout. Dev / E2E only. |
 | `twilio` | `TwilioSmsProviderFactory` | Sends via Twilio Programmable Messaging. |
 | `sns`    | `SnsSmsProviderFactory`    | Sends via Amazon SNS Publish (region-scoped). |
+| `msg91`  | `Msg91SmsProviderFactory`  | Sends via MSG91 Flow API (DLT-compliant for India). |
 
 Switching providers is a one-env-var change — the active provider is selected via Keycloak's standard SPI configuration mechanism (`KC_SPI_SMS_PROVIDER` env var or `--spi-sms-provider` flag). No code change or rebuild required.
 
@@ -318,9 +319,36 @@ If `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` are not set, the AWS SDK falls 
 
 The SNS provider depends on `software.amazon.awssdk:sns` (~5 MB shaded into the fat JAR). If you don't intend to use SNS, leave `KC_SPI_SMS_PROVIDER` set to `log` or `twilio` — the SDK code is on classpath but never loaded.
 
+### Using the MSG91 Provider
+
+MSG91's **Flow API** is template-based and DLT-compliant — the preferred path for Indian carriers. Pre-register an OTP template in the MSG91 dashboard with an OTP variable placeholder (default name `var`), then wire the credentials:
+
+```yaml
+# docker-compose.yml
+environment:
+  KC_SPI_SMS_PROVIDER:  msg91
+  MSG91_AUTH_KEY:       ${MSG91_AUTH_KEY}        # required
+  MSG91_TEMPLATE_ID:    ${MSG91_TEMPLATE_ID}     # required — DLT-approved Flow template id
+  MSG91_SENDER_ID:      ${MSG91_SENDER_ID}       # optional; falls back to sender id set on the template
+  MSG91_OTP_VAR_NAME:   var                      # template variable receiving the code (default: var)
+```
+
+Equivalent CLI flags:
+
+```bash
+/opt/keycloak/bin/kc.sh start \
+  --spi-sms-provider=msg91 \
+  --spi-sms-msg91-auth-key="$MSG91_AUTH_KEY" \
+  --spi-sms-msg91-template-id="$MSG91_TEMPLATE_ID" \
+  --spi-sms-msg91-sender-id="$MSG91_SENDER_ID" \
+  --spi-sms-msg91-otp-var-name=var
+```
+
+The provider extracts the numeric OTP from the outbound SMS body (`"Your verification code is: 123456"`) and posts it under `MSG91_OTP_VAR_NAME` to the configured Flow template — keep the template body using the same variable name. Like Twilio, MSG91 uses JDK 17's `HttpClient` directly with zero extra runtime dependencies.
+
 ### Implementing a Custom SMS Provider
 
-To integrate with another SMS gateway (MSG91, Vonage, Plivo, Karix, etc.), implement two interfaces:
+To integrate with another SMS gateway (Vonage, Plivo, Karix, etc.), implement two interfaces:
 
 1. **`SmsProvider`** — the send logic:
 
