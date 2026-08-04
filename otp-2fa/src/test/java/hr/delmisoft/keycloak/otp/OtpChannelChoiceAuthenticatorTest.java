@@ -239,6 +239,64 @@ class OtpChannelChoiceAuthenticatorTest {
     }
 
     @Test
+    void action_validEmailOtp_marksEmailVerified() {
+        setupCommonMocks();
+        stubValidOtpSubmission("email", "123456");
+        when(user.getEmail()).thenReturn("user@example.com");
+        when(user.isEmailVerified()).thenReturn(false);
+        when(authSession.getAuthNote(OtpChannelChoiceAuthenticator.AUTH_NOTE_TARGET)).thenReturn("user@example.com");
+
+        authenticator.action(context);
+
+        verify(user).setEmailVerified(true);
+        verify(user, never()).setSingleAttribute(eq(SmsOtpConst.DEFAULT_PHONE_VERIFIED_ATTRIBUTE), anyString());
+        verify(context).success();
+    }
+
+    @Test
+    void action_validSmsOtp_marksPhoneVerified() {
+        setupCommonMocks();
+        stubValidOtpSubmission("sms", "654321");
+        when(authSession.getAuthNote(OtpChannelChoiceAuthenticator.AUTH_NOTE_TARGET)).thenReturn("+1234567890");
+
+        authenticator.action(context);
+
+        verify(user).setSingleAttribute(SmsOtpConst.DEFAULT_PHONE_VERIFIED_ATTRIBUTE, "true");
+        verify(user, never()).setEmailVerified(true);
+        verify(context).success();
+    }
+
+    @Test
+    void action_validOtp_markVerifiedDisabled_doesNotMarkAnything() {
+        setupCommonMocks();
+        stubValidOtpSubmission("sms", "654321");
+        when(authSession.getAuthNote(OtpChannelChoiceAuthenticator.AUTH_NOTE_TARGET)).thenReturn("+1234567890");
+        when(context.getAuthenticatorConfig()).thenReturn(authenticatorConfig);
+        Map<String, String> config = new HashMap<>();
+        config.put(OtpChannelChoiceConst.CONFIG_MARK_VERIFIED, "false");
+        when(authenticatorConfig.getConfig()).thenReturn(config);
+
+        authenticator.action(context);
+
+        verify(user, never()).setSingleAttribute(eq(SmsOtpConst.DEFAULT_PHONE_VERIFIED_ATTRIBUTE), anyString());
+        verify(user, never()).setEmailVerified(true);
+        verify(context).success();
+    }
+
+    private void stubValidOtpSubmission(String channel, String code) {
+        MultivaluedMap<String, String> formParams = new MultivaluedHashMap<>();
+        formParams.putSingle(OtpChannelChoiceAuthenticator.PARAM_OTP, code);
+        when(context.getHttpRequest()).thenReturn(httpRequest);
+        when(httpRequest.getDecodedFormParameters()).thenReturn(formParams);
+        when(context.getAuthenticationSession()).thenReturn(authSession);
+        when(context.getAuthenticatorConfig()).thenReturn(null);
+        when(authSession.getAuthNote(OtpChannelChoiceAuthenticator.AUTH_NOTE_CHANNEL)).thenReturn(channel);
+        when(authSession.getAuthNote(OtpChannelChoiceAuthenticator.AUTH_NOTE_CODE)).thenReturn(code);
+        when(authSession.getAuthNote(OtpChannelChoiceAuthenticator.AUTH_NOTE_EXPIRY)).thenReturn(String.valueOf(Time.currentTime() + 300));
+        when(authSession.getAuthNote(OtpChannelChoiceAuthenticator.AUTH_NOTE_ATTEMPTS)).thenReturn("0");
+    }
+
+    @Test
     void action_invalidOtp_incrementsAttemptsAndFails() {
         MultivaluedMap<String, String> formParams = new MultivaluedHashMap<>();
         formParams.putSingle(OtpChannelChoiceAuthenticator.PARAM_OTP, "999999");

@@ -104,6 +104,7 @@ All authenticators are configurable through the Keycloak admin console under the
 | `emailOtp.codeLength` | Code Length | `6` | Number of digits in the OTP code |
 | `emailOtp.ttl` | Code TTL (seconds) | `300` | Time-to-live for the OTP code |
 | `emailOtp.maxRetries` | Max Retries | `3` | Max failed attempts before invalidation |
+| `emailOtp.markVerified` | Mark Email Verified | `true` | Set the user's `emailVerified` flag after a successful OTP |
 
 ### SMS OTP
 
@@ -113,6 +114,8 @@ All authenticators are configurable through the Keycloak admin console under the
 | `smsOtp.ttl` | Code TTL (seconds) | `300` | Time-to-live for the OTP code |
 | `smsOtp.maxRetries` | Max Retries | `3` | Max failed attempts before invalidation |
 | `smsOtp.phoneAttribute` | Phone Number Attribute | `phoneNumber` | User attribute storing the phone number |
+| `smsOtp.phoneVerifiedAttribute` | Phone Verified Attribute | `phoneNumberVerified` | User attribute set to `"true"` after a successful OTP |
+| `smsOtp.markVerified` | Mark Phone Verified | `true` | Whether to set the phone verified attribute after a successful OTP |
 
 ## Setup: Browser Flow
 
@@ -237,6 +240,28 @@ browser-otp-choice-forms           (ALTERNATIVE)
 | `otpChoice.ttl` | Code TTL (seconds) | `300` | Time-to-live for the OTP code |
 | `otpChoice.maxRetries` | Max Retries | `3` | Max failed attempts before invalidation |
 | `otpChoice.phoneAttribute` | Phone Number Attribute | `phoneNumber` | User attribute storing the phone number |
+| `otpChoice.phoneVerifiedAttribute` | Phone Verified Attribute | `phoneNumberVerified` | User attribute set to `"true"` after a successful SMS OTP |
+| `otpChoice.markVerified` | Mark Channel Verified | `true` | Mark the used channel verified after a successful OTP |
+
+## Verification Recording
+
+A completed OTP is proof that the user controls the address or number the code went to, so the
+result is written back to the user profile (all four authenticators plus both direct-grant types):
+
+| Channel | What is written | Where it shows up |
+|---|---|---|
+| Email | Keycloak's built-in `emailVerified` flag | `email_verified` claim in ID / access tokens |
+| SMS | User attribute `phoneNumberVerified` = `"true"` | add a **User Attribute** protocol mapper to expose it as `phone_number_verified` |
+
+Details:
+
+- The delivery target is captured when the code is sent (auth note for browser flows, single-use
+  object note for direct grants). If the profile's email / phone changed between send and verify,
+  the flag is **not** set — the proof no longer applies to what the profile holds.
+- Already-verified users are not re-written, so a repeat login is not a DB write.
+- Disable per authenticator with `emailOtp.markVerified` / `smsOtp.markVerified` /
+  `otpChoice.markVerified`. The direct-grant types (`urn:otp:email`, `urn:otp:sms`) always record.
+- The demo realm ships a `phone_number_verified` mapper on both clients as a reference.
 
 ## Email Configuration
 

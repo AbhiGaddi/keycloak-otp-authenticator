@@ -25,6 +25,7 @@ import hr.delmisoft.keycloak.otp.identifier.IdentifierUtil;
 import hr.delmisoft.keycloak.otp.sms.SmsException;
 import hr.delmisoft.keycloak.otp.sms.SmsOtpConst;
 import hr.delmisoft.keycloak.otp.sms.SmsProvider;
+import hr.delmisoft.keycloak.otp.verify.OtpVerificationRecorder;
 
 /**
  * Combined OTP authenticator that lets the user choose between Email and SMS
@@ -42,6 +43,7 @@ public class OtpChannelChoiceAuthenticator implements Authenticator {
     static final String AUTH_NOTE_CODE = "otpChoiceCode";
     static final String AUTH_NOTE_EXPIRY = "otpChoiceExpiry";
     static final String AUTH_NOTE_ATTEMPTS = "otpChoiceAttempts";
+    static final String AUTH_NOTE_TARGET = "otpChoiceTarget";
 
     static final String PARAM_CHANNEL = "channel";
     static final String PARAM_OTP = "otp";
@@ -123,6 +125,7 @@ public class OtpChannelChoiceAuthenticator implements Authenticator {
         authSession.removeAuthNote(AUTH_NOTE_CODE);
         authSession.removeAuthNote(AUTH_NOTE_EXPIRY);
         authSession.removeAuthNote(AUTH_NOTE_ATTEMPTS);
+        authSession.removeAuthNote(AUTH_NOTE_TARGET);
         authSession.setAuthNote(AUTH_NOTE_CHANNEL, channel);
         authSession.setAuthNote(AUTH_NOTE_CODE, code);
         authSession.setAuthNote(AUTH_NOTE_EXPIRY, String.valueOf(Time.currentTime() + ttl));
@@ -199,11 +202,31 @@ public class OtpChannelChoiceAuthenticator implements Authenticator {
         }
 
         if (MessageDigest.isEqual(storedCode.getBytes(StandardCharsets.UTF_8), enteredOtp.getBytes(StandardCharsets.UTF_8))) {
+            markChannelVerified(context, channel, authSession.getAuthNote(AUTH_NOTE_TARGET));
             context.success();
         } else {
             authSession.setAuthNote(AUTH_NOTE_ATTEMPTS, String.valueOf(attempts + 1));
             context.failureChallenge(AuthenticationFlowError.INVALID_CREDENTIALS,
                     context.form().setError(errorInvalid).createForm(template));
+        }
+    }
+
+    /**
+     * Records the successful challenge on the user profile for the channel that was used —
+     * without this, {@code email_verified} / the phone-verified attribute stay false forever
+     * even though the user just proved control of the address or number.
+     */
+    private void markChannelVerified(AuthenticationFlowContext context, String channel, String target) {
+        if (!getConfigBoolean(context, OtpChannelChoiceConst.CONFIG_MARK_VERIFIED, OtpChannelChoiceConst.DEFAULT_MARK_VERIFIED)) {
+            return;
+        }
+        if (CHANNEL_EMAIL.equals(channel)) {
+            OtpVerificationRecorder.markEmailVerified(context.getUser(), target);
+        } else {
+            OtpVerificationRecorder.markPhoneVerified(context.getUser(),
+                    getConfigString(context, OtpChannelChoiceConst.CONFIG_PHONE_ATTRIBUTE, SmsOtpConst.DEFAULT_PHONE_ATTRIBUTE),
+                    getConfigString(context, OtpChannelChoiceConst.CONFIG_PHONE_VERIFIED_ATTRIBUTE, SmsOtpConst.DEFAULT_PHONE_VERIFIED_ATTRIBUTE),
+                    target);
         }
     }
 
@@ -232,6 +255,8 @@ public class OtpChannelChoiceAuthenticator implements Authenticator {
                     .setRealm(context.getRealm())
                     .setUser(context.getUser())
                     .send(EmailOtpConst.EMAIL_SUBJECT_KEY, EmailOtpConst.EMAIL_TEMPLATE, new HashMap<>(Map.of("code", code)));
+            // Remember the delivery target so verification can only mark that address verified
+            context.getAuthenticationSession().setAuthNote(AUTH_NOTE_TARGET, context.getUser().getEmail());
             return true;
         } catch (EmailException e) {
             LOG.error("Failed to send OTP email", e);
@@ -254,6 +279,8 @@ public class OtpChannelChoiceAuthenticator implements Authenticator {
         try {
             String message = "Your verification code is: " + code;
             context.getSession().getProvider(SmsProvider.class).send(phoneNumber, message);
+            // Remember the delivery target so verification can only mark that number verified
+            context.getAuthenticationSession().setAuthNote(AUTH_NOTE_TARGET, phoneNumber);
             return true;
         } catch (SmsException e) {
             context.failureChallenge(AuthenticationFlowError.INTERNAL_ERROR,
@@ -280,6 +307,13 @@ public class OtpChannelChoiceAuthenticator implements Authenticator {
         } catch (NumberFormatException e) {
             return defaultValue;
         }
+    }
+
+    static boolean getConfigBoolean(AuthenticationFlowContext context, String key, boolean defaultValue) {
+        AuthenticatorConfigModel config = context.getAuthenticatorConfig();
+        if (config == null || config.getConfig() == null) return defaultValue;
+        String value = config.getConfig().get(key);
+        return (value == null || value.isBlank()) ? defaultValue : Boolean.parseBoolean(value);
     }
 
     static String getConfigString(AuthenticationFlowContext context, String key, String defaultValue) {
